@@ -1,0 +1,11 @@
+pawa
+====
+  whatsapp messanger parser
+
+usage
+-----
+  $ ./pawa <filename>
+
+build
+-----
+  $ make
