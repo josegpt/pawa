@@ -1,16 +1,26 @@
 #include <stdio.h>
 #include <ctype.h>
+#include <getopt.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define MAX_SIZE 4096
+
+const char name[] = "pawa";
+const char version[] = "0.0.1";
+const char usage[] =
+  "usage: ./pawa [...OPTIONS] <filename>\n"
+  "options:\n"
+  "    -h print this message and exits.\n"
+  "    -v print version and exits.\n"
+  "    -t print tokenize messages.\n";
 
 typedef enum {
   DATE,
   TIME,
   PERSON,
   MESSAGE,
-  ERR,
+  ERROR,
   DONE
 } TokenType;
 
@@ -18,114 +28,109 @@ typedef enum {
   INIT,
   INDATE,
   INTIME,
-  INPERSON,
-  INMESSAGE
+  /* INPERSON, */
+  /* INMESSAGE */
 } State;
 
 typedef struct {
   TokenType tt;
-  char* lexeme;
+  char lexeme[MAX_SIZE];
   int lnumber;
 } Token;
 
 Token get_token(FILE* fp, int* lnumber)
 {
-  char c;
-  Token token;
+  Token token = {0};
   State state = INIT;
-  char lex[MAX_SIZE] = "";
-  while(!feof(fp)) {
-    c = fgetc(fp);
+  char lexeme[MAX_SIZE];
+  int lexeme_length = 0;
+  int c;
+  while ((c = fgetc(fp)) != EOF) {
+    if (c == '\n') (*lnumber)++;
     switch(state) {
     case INIT:
+      if (isspace(c)) continue;
       if (isdigit(c)) {
         state = INDATE;
-        strncat(lex, &c, 1);
-      } else if (c == '-') {
-        state = INPERSON;
-      } else if (c == ':') {
-        state = INMESSAGE;
+      } else {
+        token.tt = ERROR;
+        sprintf(token.lexeme, "ERROR: unknown token `%c' on line %d\n", c, *lnumber);
+        token.lnumber = *lnumber;
+        return token;
       }
-      break;
     case INDATE:
-      if (c == ':') {
-        state = INTIME;
-        strncat(lex, &c, 1);
+      if (isdigit(c) || c == '/') {
+        lexeme[lexeme_length++] = c;
       } else if (c == ',') {
         token.tt = DATE;
         token.lnumber = *lnumber;
-        /* FIX: Fix garbage at the end of the string */
-        token.lexeme = lex;
+        strcpy(token.lexeme, lexeme);
         return token;
+      } else if (c == ':') {
+        ungetc(c, fp);
+        state = INTIME;
       } else {
-        strncat(lex, &c, 1);
+        token.tt = ERROR;
+        token.lnumber = *lnumber;
+        sprintf(token.lexeme, "ERROR: found `%c' while tokenizing `date' on line %d\n", c, *lnumber);
+        return token;
       }
       break;
     case INTIME:
-      if (c == '-') {
-        ungetc(c, fp);
+      if (c == ' ') continue;
+      if (isdigit(c) || c == ':' || c == 'A' || c == 'P' || c == 'M') {
+        lexeme[lexeme_length++] = c;
+      } else if (c == '-') {
         token.tt = TIME;
         token.lnumber = *lnumber;
-        token.lexeme = lex;
+        strcpy(token.lexeme, lexeme);
         return token;
-      } else if (c == ' ') {
-        continue;
       } else {
-        strncat(lex, &c, 1);
-      }
-      break;
-    case INPERSON:
-      if (c == ':') {
-        ungetc(c, fp);
-        token.tt = PERSON;
+        token.tt = ERROR;
         token.lnumber = *lnumber;
-        token.lexeme = lex;
+        sprintf(token.lexeme, "ERROR: found `%c' while tokenizing `time' on line %d\n", c, *lnumber);
         return token;
-      } else if (c == '\n') {
-        ungetc(c, fp);
-        state = INMESSAGE;
-      } else {
-        strncat(lex, &c, 1);
       }
       break;
-    case INMESSAGE:
-      if (c == '\n') {
-        token.tt = MESSAGE;
-        token.lnumber = *lnumber;
-        (*lnumber)++;
-        /* FIX: Trim space from the front */
-        token.lexeme = lex;
-        return token;
-      } else {
-        strncat(lex, &c, 1);
-      }
-      break;
-    default:
-      token.tt = ERR;
-      token.lexeme = "ERR: unknown token";
-      token.lnumber = *lnumber;
-      return token;
     }
   }
-  token.tt = DONE;
-  token.lexeme = "DONE";
+  if (feof(fp)) {
+    token.tt = DONE;
+    strcpy(token.lexeme, "DONE");
+    token.lnumber = *lnumber;
+    return token;
+  }
+  token.tt = ERROR;
+  strcpy(token.lexeme, "ERROR: something went wrong while performing I/O");
   token.lnumber = *lnumber;
   return token;
 }
 
-int main(int argc, char **argv) {
-  if (argc < 2) {
-    fprintf (stderr, "ERR: file_name was not provided");
-    exit(1);
+int main(int argc, char** argv) {
+  int opt;
+  while ((opt = getopt(argc, argv, "hv")) != -1) {
+    switch(opt) {
+    case 'h':
+      printf(usage);
+      exit(EXIT_SUCCESS);
+    case 'v':
+      printf("%s version: %s", name, version);
+      exit(EXIT_SUCCESS);
+    }
   }
-  FILE *fp = fopen(argv[1], "r");
+  const char* file_path = argv[optind];
+  if (file_path == NULL) {
+    fprintf(stderr, "ERROR: file_path not provided");
+    exit(EXIT_FAILURE);
+  }
+  FILE *fp = fopen(file_path, "r");
   if (fp == NULL) {
-    fprintf(stderr, "ERR: could not open file: %s", argv[1]);
-    exit(1);
+    fprintf(stderr, "ERROR: could not open file: `%s'", file_path);
+    exit(EXIT_FAILURE);
   }
   int lnumber = 0;
   Token token;
-  while(token.tt != ERR && token.tt != DONE) {
+  while(token.tt != ERROR && token.tt != DONE) {
     token = get_token(fp, &lnumber);
     switch(token.tt) {
     case DATE:
@@ -147,6 +152,6 @@ int main(int argc, char **argv) {
       printf("%d: %s\n", token.lnumber, token.lexeme);
     }
   }
-  fclose(fp);
-  return 0;
+  /* fclose(fp); */
+  return EXIT_SUCCESS;
 }
